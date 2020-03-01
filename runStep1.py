@@ -12,7 +12,7 @@ def main():
 
     ci = CollectInfo()
     ci.readAccount(accountFile)
-    ci.login(username, password)
+    ci.login()
     #等待页面过滤candidate操作结束
     data = input("please enter any key to store candidate data info to the file: ")
     #列表
