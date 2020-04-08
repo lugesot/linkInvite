@@ -14,23 +14,24 @@ def main():
 
     ci = CollectInfo()
     if ci.testRedis() == True:
-        ci.readAccount(accountFile)
-        ci.login()
-        #等待页面过滤candidate操作结束
-        data = input("please enter any key to store candidate data info to the file: ")
-        #列表
-        #xpath https://www.cnblogs.com/liangblog/p/11943877.html
-        ci.logger.info("开始搜集：" + 0)   
         try:
+            ci.logger.debug("搜索页面：" + str(0))
+            ci.readAccount(accountFile)
+            ci.login()
+            #等待页面过滤candidate操作结束
+            data = input("please enter any key to store candidate data info to the file: ")
+            #列表
+            #xpath https://www.cnblogs.com/liangblog/p/11943877.html
+            ci.logger.info("开始搜集：")   
+        
             ci.searchPage(0)
         except Exception as e:
             print(e)
             ci.logger.error(e)
         else:
             print("搜集完毕")
-        
-        ci.logger.info("本次共搜集个数：" + len(ci.data))   
-        ci.save()
+        ci.logger.info("本次浏览用户数：" + str(ci.browseCount))
+        ci.logger.info("本次共搜集个数：" + str(ci.collectUserCount))   
 
 #element.close()
 class CollectInfo(object):
@@ -42,8 +43,13 @@ class CollectInfo(object):
         #driver = webdriver.Chrome(executable_path=driver_path, options=options)
         self.driver = webdriver.Chrome(options=options)
         self.reidsClient = redis.Redis(host='127.0.0.1', port=6379)
+        self.createFile()
+        # 浏览用户计数
+        self.browseCount = 0 
+        # 搜集目标计数
+        self.collectUserCount = 0
         #self.sharedConnectionsKey = "sharedConnections"
-        self.data = []
+        #self.data = []
         
 
     def testRedis(self):
@@ -77,6 +83,7 @@ class CollectInfo(object):
                 raise Exception("账户信息为空，请检查格式，每行: 用户名 空格 密码")
         except FileNotFoundError as fnf:
             self.logger.debug("{0}文件不存在".format(fileName))
+            raise fnf
         pass
 
     def login(self):
@@ -92,7 +99,7 @@ class CollectInfo(object):
         element.send_keys(Keys.RETURN)
 
     def searchPage(self,index):
-        self.logger.debug("搜索页面：" + index)
+        self.logger.debug("搜索页面：" + str(index))
         self.driver.implicitly_wait(1)
         self.searchWindow = self.driver.window_handles[1] #.current_window_handle()
         self.driver.switch_to.window(self.searchWindow)
@@ -124,24 +131,31 @@ class CollectInfo(object):
             self.searchPage(index+1)
     
     def profilePage(self,item):
+        self.browseCount = self.browseCount +1
         urlEle = item.get_attribute("href")
         newWindow = "window.open('"+urlEle+"');"
+        
+        print("处理用户:" + urlEle)
+        self.logger.debug("处理用户:" + urlEle)
+
         self.driver.execute_script(newWindow)
         toHandle = self.driver.window_handles[2]
         self.driver.switch_to.window(toHandle)
         self.driver.implicitly_wait(4)
         locator = (By.XPATH, '//div[@id="primary-content"]//div[@class="module-footer"]//a')
         try:
-            WebDriverWait(self.driver, 5, 0.5).until(EC.element_to_be_clickable(locator))
+            WebDriverWait(self.driver, 3, 0.5).until(EC.element_to_be_clickable(locator))
         except TimeoutException as te:
-            print("skip who has no profile："+urlEle)
-            self.logger.debug("skip who has no profile："+urlEle)
+            print("无摘要用户:"+urlEle)
+            self.logger.debug("无摘要用户:"+urlEle)
         else:
             profilePage = self.driver.find_element_by_xpath("//div[@id='primary-content']//div[@class='module-footer']//a")
             mainPageUrl = profilePage.get_attribute("href")
             print("添加用户:" + mainPageUrl)
             self.logger.debug("添加用户:" + mainPageUrl)
-            self.data.append({"mainPageUrl":mainPageUrl})
+            # self.data.append({"mainPageUrl":mainPageUrl})
+            self.saveData(mainPageUrl)
+            self.collectUserCount = self.collectUserCount + 1 
         #profilePage.click()
         self.driver.close()
         self.driver.switch_to.window(self.searchWindow)
@@ -151,11 +165,11 @@ class CollectInfo(object):
         self.driver.switch_to.window(toHandle)
         self.driver.implicitly_wait(4)
         locator = (By.XPATH, '//main//section//button')
-        WebDriverWait(self.driver, 4, 0.5).until(EC.element_to_be_clickable(locator))
+        WebDriverWait(self.driver, 3, 0.5).until(EC.element_to_be_clickable(locator))
         try:
             self.driver.find_element_by_xpath('//main//section//button[contains(@class,"pv-s-profile-actions--connect")]')
         except Exception as e:
-            print(e)
+            print(e.message)
             print("connect btn not found")
             self.logger.debug(e)
             self.logger.debug("connect btn not found")
@@ -163,14 +177,9 @@ class CollectInfo(object):
             print("connect btn found")
             self.logger.debug("connect btn not found")
         self.driver.close()
+
     def close(self):
         data = input("input any key to end program ")
-
-    def save(self):
-        self.logger.debug("保存文件开始:" + len(self.data))
-        u = Util()
-        u.createFile(self.data)
-        self.logger.debug("保存文件结束")
 
     def get_logger(self):
         BASE_DIR = os.path.dirname(os.path.abspath(__file__)) #获取当前目录的绝对路径
@@ -186,8 +195,12 @@ class CollectInfo(object):
         return logger
     pass
     #########
-class Util(object):
-    def createFile(self, dataList):
+    def saveData(self, row):
+        with open(self.filename, 'w', encoding="utf-8") as file:
+            file.write(row + "\n")
+        pass
+
+    def createFile(self):
         today = time.strftime("%Y%m%d", time.localtime())
         d = os.getcwd()
         filename=d +'/'+today +'_'
@@ -195,10 +208,10 @@ class Util(object):
         while os.path.isfile(filename  + str(index)+ ".txt"):
             index = index + 1
 
-        filename = filename + str(index) + ".txt"
-        with open(filename, 'w', encoding="utf-8") as file:
-            for row in dataList:
-                file.write(row['mainPageUrl']+"\n")
+        self.filename = filename + str(index) + ".txt"
+        # with open(filename, 'w', encoding="utf-8") as file:
+        #     for row in dataList:
+        #         file.write(row['mainPageUrl']+"\n")
 
 if __name__ == '__main__':
     # u = Util()
